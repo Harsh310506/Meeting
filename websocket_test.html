@@ -1,0 +1,217 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+    <title>Meeting Monitor - WebSocket Test</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 20px;
+        }
+        
+        .container {
+            max-width: 800px;
+            margin: 0 auto;
+        }
+        
+        .status {
+            padding: 10px;
+            margin: 10px 0;
+            border-radius: 5px;
+        }
+        
+        .connected {
+            background-color: #d4edda;
+            border: 1px solid #c3e6cb;
+            color: #155724;
+        }
+        
+        .disconnected {
+            background-color: #f8d7da;
+            border: 1px solid #f5c6cb;
+            color: #721c24;
+        }
+        
+        .error {
+            background-color: #fff3cd;
+            border: 1px solid #ffeaa7;
+            color: #856404;
+        }
+        
+        .log {
+            background-color: #f8f9fa;
+            border: 1px solid #dee2e6;
+            padding: 10px;
+            height: 300px;
+            overflow-y: auto;
+        }
+        
+        button {
+            padding: 10px 20px;
+            margin: 5px;
+            background-color: #007bff;
+            color: white;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+        }
+        
+        button:hover {
+            background-color: #0056b3;
+        }
+        
+        button:disabled {
+            background-color: #6c757d;
+            cursor: not-allowed;
+        }
+    </style>
+</head>
+
+<body>
+    <div class="container">
+        <h1>Meeting Monitor - WebSocket Test</h1>
+
+        <div id="status" class="status disconnected">
+            Status: Disconnected
+        </div>
+
+        <div>
+            <button id="connectBtn" onclick="connect()">Connect</button>
+            <button id="disconnectBtn" onclick="disconnect()" disabled>Disconnect</button>
+            <button id="testBtn" onclick="sendTestData()" disabled>Send Test Audio</button>
+            <button id="clearBtn" onclick="clearLog()">Clear Log</button>
+        </div>
+
+        <h3>WebSocket Log:</h3>
+        <div id="log" class="log"></div>
+
+        <h3>Instructions:</h3>
+        <ul>
+            <li>Click "Connect" to establish WebSocket connection</li>
+            <li>Click "Send Test Audio" to send sample audio data</li>
+            <li>Watch the log for transcription results</li>
+            <li>Server should be running at: <strong>http://localhost:8000</strong></li>
+            <li>WebSocket endpoint: <strong>ws://localhost:8000/api/v1/ws/test_client</strong></li>
+        </ul>
+
+        <h3>Health Check:</h3>
+        <div id="health">
+            <button onclick="checkHealth()">Check Server Health</button>
+            <div id="healthResult"></div>
+        </div>
+    </div>
+
+    <script>
+        let ws = null;
+        const clientId = 'test_client_' + Date.now();
+
+        function log(message) {
+            const logDiv = document.getElementById('log');
+            const timestamp = new Date().toLocaleTimeString();
+            logDiv.innerHTML += `[${timestamp}] ${message}\n`;
+            logDiv.scrollTop = logDiv.scrollHeight;
+        }
+
+        function updateStatus(status, isConnected) {
+            const statusDiv = document.getElementById('status');
+            statusDiv.textContent = `Status: ${status}`;
+            statusDiv.className = `status ${isConnected ? 'connected' : 'disconnected'}`;
+
+            document.getElementById('connectBtn').disabled = isConnected;
+            document.getElementById('disconnectBtn').disabled = !isConnected;
+            document.getElementById('testBtn').disabled = !isConnected;
+        }
+
+        function connect() {
+            try {
+                const wsUrl = `ws://localhost:8000/api/v1/ws/${clientId}`;
+                log(`Connecting to: ${wsUrl}`);
+
+                ws = new WebSocket(wsUrl);
+
+                ws.onopen = function(event) {
+                    log('✅ WebSocket connection opened');
+                    updateStatus('Connected', true);
+                };
+
+                ws.onmessage = function(event) {
+                    try {
+                        const data = JSON.parse(event.data);
+                        log(`📥 Received: ${JSON.stringify(data, null, 2)}`);
+
+                        if (data.type === 'transcription') {
+                            log(`🎤 Transcription received with ${data.data.total_segments} segments`);
+                        } else if (data.type === 'error') {
+                            log(`❌ Error: ${data.message}`);
+                        }
+                    } catch (e) {
+                        log(`📥 Raw message: ${event.data}`);
+                    }
+                };
+
+                ws.onclose = function(event) {
+                    log(`🔌 WebSocket connection closed: ${event.code} - ${event.reason}`);
+                    updateStatus('Disconnected', false);
+                };
+
+                ws.onerror = function(error) {
+                    log(`❌ WebSocket error: ${error}`);
+                    updateStatus('Error', false);
+                };
+
+            } catch (error) {
+                log(`❌ Connection error: ${error.message}`);
+                updateStatus('Error', false);
+            }
+        }
+
+        function disconnect() {
+            if (ws) {
+                ws.close();
+                ws = null;
+            }
+        }
+
+        function sendTestData() {
+            if (ws && ws.readyState === WebSocket.OPEN) {
+                // Create a simple test audio data (just bytes for testing)
+                const testAudioData = new ArrayBuffer(8);
+                const view = new Uint8Array(testAudioData);
+                for (let i = 0; i < view.length; i++) {
+                    view[i] = i;
+                }
+
+                log('📤 Sending test audio data...');
+                ws.send(testAudioData);
+            } else {
+                log('❌ WebSocket not connected');
+            }
+        }
+
+        function clearLog() {
+            document.getElementById('log').innerHTML = '';
+        }
+
+        async function checkHealth() {
+            const healthResult = document.getElementById('healthResult');
+            try {
+                const response = await fetch('http://localhost:8000/api/v1/health');
+                const data = await response.json();
+                healthResult.innerHTML = `<pre>${JSON.stringify(data, null, 2)}</pre>`;
+                healthResult.style.color = 'green';
+            } catch (error) {
+                healthResult.innerHTML = `Error: ${error.message}`;
+                healthResult.style.color = 'red';
+            }
+        }
+
+        // Auto-check health on page load
+        window.onload = function() {
+            log('🌐 WebSocket test page loaded');
+            log(`Client ID: ${clientId}`);
+            checkHealth();
+        };
+    </script>
+</body>
+
+</html>

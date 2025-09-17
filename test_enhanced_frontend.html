@@ -1,0 +1,344 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Enhanced Analysis Frontend Test</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 20px;
+            background-color: #f5f7fa;
+        }
+        
+        .container {
+            background: white;
+            border-radius: 12px;
+            padding: 24px;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+        }
+        
+        .button-group {
+            display: flex;
+            gap: 8px;
+            margin-bottom: 20px;
+        }
+        
+        .button {
+            padding: 8px 16px;
+            border: none;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 14px;
+            font-weight: 500;
+        }
+        
+        .button.active {
+            background-color: #667eea;
+            color: white;
+        }
+        
+        .button.inactive {
+            background-color: #f3f4f6;
+            color: #374151;
+        }
+        
+        .view-content {
+            border: 2px solid #e2e8f0;
+            border-radius: 12px;
+            padding: 24px;
+            background-color: #f8fafc;
+        }
+        
+        .enhanced-section {
+            margin-bottom: 24px;
+        }
+        
+        .enhanced-section h4 {
+            margin: 0 0 12px 0;
+            color: #374151;
+            font-size: 16px;
+            font-weight: 600;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+        
+        .jargon-definition {
+            padding: 12px 16px;
+            background-color: #e0f2fe;
+            border-radius: 8px;
+            border-left: 4px solid #0277bd;
+            margin-bottom: 10px;
+        }
+        
+        .entity-tag {
+            padding: 6px 12px;
+            background-color: #fef3c7;
+            color: #92400e;
+            border-radius: 16px;
+            font-size: 13px;
+            font-weight: 500;
+            border: 1px solid #fbbf24;
+            margin-right: 8px;
+            margin-bottom: 8px;
+            display: inline-block;
+        }
+        
+        .transcript-content {
+            background: white;
+            border: 1px solid #e2e8f0;
+            border-radius: 8px;
+            padding: 20px;
+            font-size: 15px;
+            line-height: 1.7;
+            color: #374151;
+            max-height: 400px;
+            overflow: auto;
+        }
+        
+        .key-insights {
+            background-color: #fef9e7;
+            border: 1px solid #fbbf24;
+            border-radius: 8px;
+            padding: 20px;
+            font-size: 13px;
+            line-height: 1.5;
+            color: #92400e;
+            font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
+            white-space: pre-line;
+            overflow: auto;
+            max-height: 600px;
+        }
+        
+        .status-display {
+            margin-top: 20px;
+            padding: 16px;
+            background: #f0f9ff;
+            border-radius: 8px;
+            border-left: 4px solid #3b82f6;
+        }
+        
+        #connectBtn {
+            background: #10b981;
+            color: white;
+            padding: 12px 24px;
+            border: none;
+            border-radius: 8px;
+            font-size: 16px;
+            cursor: pointer;
+            margin-bottom: 20px;
+        }
+        
+        #connectBtn:hover {
+            background: #059669;
+        }
+    </style>
+</head>
+
+<body>
+    <div class="container">
+        <h1>🧠 Enhanced Analysis Frontend Test</h1>
+        <p>Testing the new enhanced analysis view with mock data and WebSocket connection.</p>
+
+        <button id="connectBtn">Connect to WebSocket & Send Test Data</button>
+
+        <div class="button-group">
+            <button class="button active" onclick="showView('enhanced')">🧠 Enhanced</button>
+            <button class="button inactive" onclick="showView('extracted')">📄 Extracted</button>
+            <button class="button inactive" onclick="showView('detailed')">📋 Detailed</button>
+        </div>
+
+        <div id="enhanced-view" class="view-content">
+            <h3 style="margin: 0 0 20px 0; font-size: 18px; font-weight: 600; color: #1e293b; display: flex; align-items: center; gap: 8px;">
+                🧠 Enhanced Analysis
+            </h3>
+
+            <div class="enhanced-section">
+                <h4>📝 Enhanced Transcript</h4>
+                <div class="transcript-content">
+                    <p>Welcome to our quarterly business review. Today we'll discuss our <span style="background: #fef3c7; padding: 2px 4px; border-radius: 3px;">🔥 KPIs</span> and <span style="background: #fef3c7; padding: 2px 4px; border-radius: 3px;">💼 ROI metrics</span>.
+                        Our <span style="background: #dbeafe; padding: 2px 4px; border-radius: 3px;">⭐ customer acquisition cost</span> has improved significantly. We need to focus on <span style="background: #fef3c7; padding: 2px 4px; border-radius: 3px;">🏷️ B2B</span>                        strategies and <span style="background: #fef3c7; padding: 2px 4px; border-radius: 3px;">💼 SaaS</span> implementation.</p>
+                </div>
+            </div>
+
+            <div class="enhanced-section">
+                <h4>⭐ Key Insights</h4>
+                <div class="key-insights" style="font-family: 'Consolas', 'Monaco', 'Courier New', monospace; white-space: pre-line; font-size: 12px; line-height: 1.4;">📋 MEETING ANALYSIS SUMMARY ================================================== 📝 ENHANCED TRANSCRIPT PREVIEW: ─────────────────────────────────── Welcome to our quarterly business review. Today we'll discuss our KPIs and ROI metrics.
+                    Our customer acquisition... 🎯 HIGHLIGHTING LEGEND: ────────────────────── 🔥 Critical Terms ⭐ Important Terms 🏷️ Acronyms 💼 Business Jargon ** Keywords 📌 Named Entities 📊 KEY ANALYSIS RESULTS: ───────────────────────── • Topics
+                    Identified: └─ Business Performance & Strategy Review • Critical Terms Found: 1. KPIs 2. ROI metrics 3. customer acquisition cost 4. quarterly review 5. business strategy • Business Jargon Detected: └─ Acronyms: KPIs, ROI, B2B, SaaS
+                    └─ Business Terms: metrics, acquisition, implementation 📌 IMPORTANT ENTITIES: ──────────────────── 📅 Dates & Times: • quarterly review • Q4 targets 🏢 Organizations: • SaaS platform 📊 Processes: • customer acquisition • business
+                    review 🤖 AI RECOMMENDATIONS: ────────────────────── 1. Focus on KPI improvement strategies 2. Analyze customer acquisition cost trends 3. Develop B2B implementation roadmap ────────────────────────────────────────────────── ✨ Enhanced
+                    Analysis Complete</div>
+            </div>
+
+            <div class="enhanced-section">
+                <h4>📚 Jargon & Definitions</h4>
+                <div class="jargon-definition">
+                    <strong style="color: #01579b;">KPIs:</strong>
+                    <span>Key Performance Indicators - measurable values that demonstrate how effectively a company is achieving key business objectives</span>
+                </div>
+                <div class="jargon-definition">
+                    <strong style="color: #01579b;">ROI:</strong>
+                    <span>Return on Investment - a measure used to evaluate the efficiency of an investment</span>
+                </div>
+                <div class="jargon-definition">
+                    <strong style="color: #01579b;">B2B:</strong>
+                    <span>Business-to-Business - transactions between companies rather than between a company and individual consumers</span>
+                </div>
+                <div class="jargon-definition">
+                    <strong style="color: #01579b;">SaaS:</strong>
+                    <span>Software as a Service - a software distribution model in which applications are hosted by a cloud service provider</span>
+                </div>
+            </div>
+
+            <div class="enhanced-section">
+                <h4>🏷️ Important Entities</h4>
+                <div>
+                    <span class="entity-tag">quarterly review (EVENT)</span>
+                    <span class="entity-tag">customer acquisition (PROCESS)</span>
+                    <span class="entity-tag">business strategy (CONCEPT)</span>
+                    <span class="entity-tag">Q4 targets (TIME)</span>
+                </div>
+            </div>
+
+            <div style="margin-top: 20px; font-size: 13px; color: #64748b; text-align: right; padding-top: 16px; border-top: 1px solid #e2e8f0;">
+                Enhanced analysis completed • 4 definitions found • 4 entities identified
+            </div>
+        </div>
+
+        <div id="extracted-view" class="view-content" style="display: none;">
+            <h3 style="margin: 0 0 16px 0; font-size: 18px; font-weight: 600; color: #1e293b;">📄 Extracted Transcript</h3>
+            <div class="transcript-content">
+                Welcome to our quarterly business review. Today we'll discuss our KPIs and ROI metrics. Our customer acquisition cost has improved significantly. We need to focus on B2B strategies and SaaS implementation.
+            </div>
+        </div>
+
+        <div id="detailed-view" class="view-content" style="display: none;">
+            <h3 style="margin: 0 0 16px 0; font-size: 18px; font-weight: 600; color: #1e293b;">📋 Detailed Transcript</h3>
+            <div style="margin-bottom: 12px; background: #f9fafb; border: 1px solid #e5e7eb; border-radius: 8px; padding: 16px;">
+                <div style="display: flex; gap: 12px; margin-bottom: 8px;">
+                    <span style="background: #dbeafe; color: #1e40af; padding: 4px 8px; border-radius: 4px; font-size: 12px;">Speaker A</span>
+                    <span style="font-size: 12px; color: #6b7280;">14:30:15</span>
+                </div>
+                <p style="margin: 0; color: #374151;">Welcome to our quarterly business review. Today we'll discuss our KPIs and ROI metrics.</p>
+            </div>
+            <div style="margin-bottom: 12px; background: #f9fafb; border: 1px solid #e5e7eb; border-radius: 8px; padding: 16px;">
+                <div style="display: flex; gap: 12px; margin-bottom: 8px;">
+                    <span style="background: #fef3c7; color: #92400e; padding: 4px 8px; border-radius: 4px; font-size: 12px;">Speaker B</span>
+                    <span style="font-size: 12px; color: #6b7280;">14:31:02</span>
+                </div>
+                <p style="margin: 0; color: #374151;">Our customer acquisition cost has improved significantly. We need to focus on B2B strategies and SaaS implementation.</p>
+            </div>
+        </div>
+
+        <div class="status-display">
+            <h4 style="margin: 0 0 8px 0; color: #1e40af;">WebSocket Status</h4>
+            <div id="websocket-status">Not connected</div>
+            <div id="message-log" style="margin-top: 10px; font-family: monospace; font-size: 12px; max-height: 200px; overflow: auto; background: #f8fafc; padding: 10px; border-radius: 4px;"></div>
+        </div>
+    </div>
+
+    <script>
+        let ws = null;
+        let currentView = 'enhanced';
+
+        function showView(viewName) {
+            // Hide all views
+            document.getElementById('enhanced-view').style.display = 'none';
+            document.getElementById('extracted-view').style.display = 'none';
+            document.getElementById('detailed-view').style.display = 'none';
+
+            // Show selected view
+            document.getElementById(viewName + '-view').style.display = 'block';
+            currentView = viewName;
+
+            // Update button states
+            document.querySelectorAll('.button').forEach(btn => {
+                btn.className = 'button inactive';
+            });
+            event.target.className = 'button active';
+        }
+
+        function logMessage(message) {
+            const log = document.getElementById('message-log');
+            const timestamp = new Date().toLocaleTimeString();
+            log.innerHTML += `[${timestamp}] ${message}\n`;
+            log.scrollTop = log.scrollHeight;
+        }
+
+        document.getElementById('connectBtn').onclick = function() {
+            if (ws) {
+                ws.close();
+            }
+
+            ws = new WebSocket('ws://localhost:8000/ws');
+
+            ws.onopen = function() {
+                document.getElementById('websocket-status').textContent = 'Connected to backend';
+                document.getElementById('websocket-status').style.color = '#059669';
+                logMessage('✅ Connected to WebSocket');
+
+                // Send test data to trigger enhanced analysis
+                setTimeout(() => {
+                    const testData = {
+                        type: 'audio_chunk',
+                        client_id: 'test_client',
+                        session_id: 'test_session_' + Date.now(),
+                        audio_data: 'dGVzdCBhdWRpbyBkYXRh', // base64 encoded test data
+                        timestamp: Date.now()
+                    };
+
+                    ws.send(JSON.stringify(testData));
+                    logMessage('📤 Sent test audio data for enhanced analysis');
+                }, 1000);
+            };
+
+            ws.onmessage = function(event) {
+                try {
+                    const data = JSON.parse(event.data);
+                    logMessage(`📥 Received: ${data.type}`);
+
+                    if (data.type === 'enhanced_transcript_analysis') {
+                        logMessage('🧠 Enhanced analysis received!');
+                        logMessage(`Analysis keys: ${Object.keys(data.data || {}).join(', ')}`);
+
+                        // Update the enhanced view with real data if received
+                        if (data.data && data.data.enhanced_transcript) {
+                            const enhancedContent = document.querySelector('#enhanced-view .transcript-content p');
+                            enhancedContent.innerHTML = data.data.enhanced_transcript;
+                            logMessage('✅ Enhanced transcript updated in view');
+                        }
+                    }
+
+                    if (data.type === 'transcript') {
+                        logMessage(`📝 Transcript: ${data.text?.substring(0, 50)}...`);
+                    }
+
+                    if (data.type === 'error') {
+                        logMessage(`❌ Error: ${data.message}`);
+                    }
+                } catch (e) {
+                    logMessage(`⚠️ Parse error: ${e.message}`);
+                }
+            };
+
+            ws.onerror = function(error) {
+                logMessage(`❌ WebSocket error: ${error}`);
+                document.getElementById('websocket-status').textContent = 'Connection error';
+                document.getElementById('websocket-status').style.color = '#dc2626';
+            };
+
+            ws.onclose = function() {
+                logMessage('🔌 WebSocket connection closed');
+                document.getElementById('websocket-status').textContent = 'Disconnected';
+                document.getElementById('websocket-status').style.color = '#6b7280';
+            };
+        };
+    </script>
+</body>
+
+</html>

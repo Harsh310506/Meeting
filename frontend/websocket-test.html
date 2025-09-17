@@ -1,0 +1,55 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+    <title>WebSocket Test</title>
+</head>
+
+<body>
+    <h1>WebSocket Connection Test</h1>
+    <div id="status">Disconnected</div>
+    <div id="messages"></div>
+
+    <script>
+        // Generate unique client ID
+        const CLIENT_ID = `client_${Math.random().toString(36).substr(2, 9)}`;
+        const WS_URL = `ws://localhost:8000/api/v1/ws/${CLIENT_ID}`;
+
+        console.log('Attempting to connect to:', WS_URL);
+
+        const statusDiv = document.getElementById('status');
+        const messagesDiv = document.getElementById('messages');
+
+        statusDiv.textContent = `Connecting to: ${WS_URL}`;
+
+        const socket = new WebSocket(WS_URL);
+
+        socket.onopen = function(event) {
+            statusDiv.textContent = 'Connected!';
+            statusDiv.style.color = 'green';
+            messagesDiv.innerHTML += '<p>✅ WebSocket connected successfully!</p>';
+            console.log('WebSocket connected:', event);
+        };
+
+        socket.onmessage = function(event) {
+            messagesDiv.innerHTML += `<p>📨 Received: ${event.data}</p>`;
+            console.log('Message received:', event.data);
+        };
+
+        socket.onclose = function(event) {
+            statusDiv.textContent = 'Disconnected';
+            statusDiv.style.color = 'red';
+            messagesDiv.innerHTML += '<p>❌ WebSocket disconnected</p>';
+            console.log('WebSocket closed:', event);
+        };
+
+        socket.onerror = function(error) {
+            statusDiv.textContent = 'Error';
+            statusDiv.style.color = 'red';
+            messagesDiv.innerHTML += `<p>💥 WebSocket error: ${error}</p>`;
+            console.error('WebSocket error:', error);
+        };
+    </script>
+</body>
+
+</html>

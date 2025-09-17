@@ -1,0 +1,217 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>WebSocket Test - Meeting Monitor ASR</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            padding: 20px;
+            background: #1a1a1a;
+            color: white;
+        }
+        
+        .container {
+            max-width: 800px;
+            margin: 0 auto;
+        }
+        
+        .status {
+            padding: 10px;
+            margin: 10px 0;
+            border-radius: 5px;
+            font-weight: bold;
+        }
+        
+        .connected {
+            background: #2d5016;
+            color: #90ee90;
+        }
+        
+        .disconnected {
+            background: #502016;
+            color: #ff6b6b;
+        }
+        
+        .logs {
+            background: #333;
+            padding: 15px;
+            border-radius: 5px;
+            height: 300px;
+            overflow-y: auto;
+            font-family: monospace;
+            white-space: pre-wrap;
+        }
+        
+        button {
+            background: #007acc;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 5px;
+            cursor: pointer;
+            margin: 5px;
+        }
+        
+        button:hover {
+            background: #005c99;
+        }
+        
+        .transcription {
+            background: #2a2a4a;
+            padding: 15px;
+            border-radius: 5px;
+            margin: 10px 0;
+            border-left: 4px solid #007acc;
+        }
+    </style>
+</head>
+
+<body>
+    <div class="container">
+        <h1>🎯 Meeting Monitor ASR - WebSocket Test</h1>
+
+        <div id="status" class="status disconnected">
+            ❌ Disconnected from WebSocket
+        </div>
+
+        <div>
+            <button onclick="connectWS()">Connect WebSocket</button>
+            <button onclick="disconnectWS()">Disconnect</button>
+            <button onclick="clearLogs()">Clear Logs</button>
+            <button onclick="testMessage()">Send Test Message</button>
+        </div>
+
+        <div class="transcription">
+            <h3>Real-time Transcription:</h3>
+            <div id="transcription">No transcriptions yet...</div>
+        </div>
+
+        <div>
+            <h3>Connection Logs:</h3>
+            <div id="logs" class="logs">Waiting for connection...\n</div>
+        </div>
+    </div>
+
+    <script>
+        let ws = null;
+        const wsUrl = 'ws://localhost:8000/ws';
+
+        function log(message) {
+            const logs = document.getElementById('logs');
+            const timestamp = new Date().toLocaleTimeString();
+            logs.textContent += `[${timestamp}] ${message}\n`;
+            logs.scrollTop = logs.scrollHeight;
+        }
+
+        function updateStatus(connected, message) {
+            const status = document.getElementById('status');
+            if (connected) {
+                status.className = 'status connected';
+                status.textContent = `✅ ${message}`;
+            } else {
+                status.className = 'status disconnected';
+                status.textContent = `❌ ${message}`;
+            }
+        }
+
+        function connectWS() {
+            if (ws && ws.readyState === WebSocket.OPEN) {
+                log('Already connected!');
+                return;
+            }
+
+            log(`Attempting to connect to: ${wsUrl}`);
+            ws = new WebSocket(wsUrl);
+
+            ws.onopen = function(event) {
+                log('✅ WebSocket connection opened!');
+                updateStatus(true, 'Connected to ASR Backend');
+            };
+
+            ws.onmessage = function(event) {
+                log(`📨 Received: ${event.data}`);
+
+                try {
+                    const message = JSON.parse(event.data);
+                    handleMessage(message);
+                } catch (error) {
+                    log(`⚠️ Failed to parse message: ${error.message}`);
+                }
+            };
+
+            ws.onclose = function(event) {
+                log(`❌ WebSocket closed. Code: ${event.code}, Reason: ${event.reason}`);
+                updateStatus(false, 'Disconnected');
+            };
+
+            ws.onerror = function(error) {
+                log(`🚫 WebSocket error: ${error}`);
+                updateStatus(false, 'Connection Error');
+            };
+        }
+
+        function handleMessage(message) {
+            const {
+                type,
+                data
+            } = message;
+
+            switch (type) {
+                case 'connection_status':
+                    log(`🔗 Connection status: ${JSON.stringify(data)}`);
+                    updateStatus(true, `ASR Status: ${data.asr_status}`);
+                    break;
+
+                case 'transcription':
+                    log(`🎤 Transcription: "${data.text}"`);
+                    document.getElementById('transcription').textContent =
+                        `"${data.text}" (confidence: ${data.confidence || 'N/A'})`;
+                    break;
+
+                case 'error':
+                    log(`🚫 Error: ${data.message}`);
+                    break;
+
+                default:
+                    log(`📋 Unknown message type: ${type}`);
+            }
+        }
+
+        function disconnectWS() {
+            if (ws) {
+                ws.close();
+                log('Disconnecting WebSocket...');
+            }
+        }
+
+        function clearLogs() {
+            document.getElementById('logs').textContent = '';
+        }
+
+        function testMessage() {
+            if (ws && ws.readyState === WebSocket.OPEN) {
+                const testMsg = {
+                    type: 'test',
+                    data: {
+                        message: 'Hello from test client!'
+                    }
+                };
+                ws.send(JSON.stringify(testMsg));
+                log(`📤 Sent test message: ${JSON.stringify(testMsg)}`);
+            } else {
+                log('⚠️ WebSocket not connected. Cannot send message.');
+            }
+        }
+
+        // Auto-connect on page load
+        window.onload = function() {
+            log('🚀 Page loaded. Auto-connecting to WebSocket...');
+            connectWS();
+        };
+    </script>
+</body>
+
+</html>

@@ -1,0 +1,169 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+    <title>Permission Checker</title>
+    <style>
+        body {
+            font-family: Arial;
+            padding: 20px;
+        }
+        
+        .status {
+            padding: 10px;
+            margin: 10px 0;
+            border-radius: 5px;
+        }
+        
+        .success {
+            background: #d4edda;
+            color: #155724;
+        }
+        
+        .error {
+            background: #f8d7da;
+            color: #721c24;
+        }
+        
+        .warning {
+            background: #fff3cd;
+            color: #856404;
+        }
+        
+        button {
+            padding: 10px 20px;
+            margin: 10px 5px;
+            font-size: 16px;
+        }
+    </style>
+</head>
+
+<body>
+    <h1>🔐 Meeting Monitor - Permission Checker</h1>
+
+    <button onclick="checkPermissions()">🔍 Check Current Permissions</button>
+    <button onclick="testScreenCapture()">🎬 Test Screen Capture</button>
+    <button onclick="resetAndTest()">🔄 Reset & Test</button>
+
+    <div id="results"></div>
+
+    <script>
+        function log(message, type = 'info') {
+            const div = document.createElement('div');
+            div.className = `status ${type}`;
+            div.innerHTML = `<strong>${new Date().toLocaleTimeString()}</strong> ${message}`;
+            document.getElementById('results').appendChild(div);
+        }
+
+        async function checkPermissions() {
+            document.getElementById('results').innerHTML = '';
+            log('🔍 Checking permissions...', 'info');
+
+            try {
+                // Check if APIs are available
+                if (!navigator.mediaDevices) {
+                    log('❌ MediaDevices API not available', 'error');
+                    return;
+                }
+
+                if (!navigator.mediaDevices.getDisplayMedia) {
+                    log('❌ getDisplayMedia not supported (use Chrome 105+)', 'error');
+                    return;
+                }
+
+                log('✅ Browser supports screen capture', 'success');
+
+                // Check current permissions
+                const cameraPermission = await navigator.permissions.query({
+                    name: 'camera'
+                });
+                const microphonePermission = await navigator.permissions.query({
+                    name: 'microphone'
+                });
+
+                log(`📷 Camera permission: ${cameraPermission.state}`,
+                    cameraPermission.state === 'granted' ? 'success' : 'warning');
+                log(`🎤 Microphone permission: ${microphonePermission.state}`,
+                    microphonePermission.state === 'granted' ? 'success' : 'warning');
+
+                // Check if currently sharing
+                if (navigator.mediaDevices.getDisplayMedia) {
+                    log('✅ Ready to test screen capture', 'success');
+                }
+
+            } catch (error) {
+                log(`❌ Error checking permissions: ${error.message}`, 'error');
+            }
+        }
+
+        async function testScreenCapture() {
+            log('🎬 Testing screen capture with audio...', 'info');
+
+            try {
+                const stream = await navigator.mediaDevices.getDisplayMedia({
+                    video: {
+                        width: 1920,
+                        height: 1080
+                    },
+                    audio: {
+                        echoCancellation: true,
+                        sampleRate: 44100,
+                        suppressLocalAudioPlayback: false
+                    }
+                });
+
+                log('✅ Permission granted successfully!', 'success');
+
+                // Check tracks
+                const videoTracks = stream.getVideoTracks();
+                const audioTracks = stream.getAudioTracks();
+
+                if (videoTracks.length > 0) {
+                    const settings = videoTracks[0].getSettings();
+                    log(`✅ Video: ${settings.width}x${settings.height} at ${settings.frameRate}fps`, 'success');
+                } else {
+                    log('⚠️ No video track - check if you selected a screen/window', 'warning');
+                }
+
+                if (audioTracks.length > 0) {
+                    const settings = audioTracks[0].getSettings();
+                    log(`✅ Audio: ${settings.sampleRate}Hz, ${settings.channelCount} channels`, 'success');
+                    log('✅ SUCCESS: System audio is being captured!', 'success');
+                } else {
+                    log('❌ No audio track - you forgot to check "Share system audio"!', 'error');
+                    log('💡 Try again and CHECK THE "Share system audio" BOX', 'warning');
+                }
+
+                // Clean up
+                setTimeout(() => {
+                    stream.getTracks().forEach(track => track.stop());
+                    log('🛑 Test completed - stopped capture', 'info');
+                }, 3000);
+
+            } catch (error) {
+                if (error.name === 'NotAllowedError') {
+                    log('❌ Permission denied - click "Allow" and check "Share system audio"', 'error');
+                } else if (error.name === 'NotFoundError') {
+                    log('❌ No screen/audio source found', 'error');
+                } else {
+                    log(`❌ Screen capture failed: ${error.message}`, 'error');
+                }
+            }
+        }
+
+        async function resetAndTest() {
+            log('🔄 Resetting permissions...', 'info');
+            log('💡 You can manually reset by clicking the 🔒 lock icon in address bar → "Reset permissions"', 'warning');
+            log('Then refresh this page and try the test again', 'info');
+        }
+
+        // Auto-check on load
+        window.onload = () => {
+            log('🚀 Permission checker loaded', 'info');
+            log('💡 Click "Check Current Permissions" to see browser permissions', 'info');
+            log('💡 Click "Test Screen Capture" to verify audio/video capture works', 'info');
+        };
+    </script>
+</body>
+
+</html>
