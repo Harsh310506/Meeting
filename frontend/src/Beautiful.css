@@ -1,4 +1,5 @@
-/* Modern Beautiful UI Styles - Enhanced Meeting Monitor */
+/* Modern Beautiful UI Styles - App Foundation */
+@import './styles/auth.css';
 
 * {
     margin: 0;
@@ -10,15 +11,60 @@ body {
     font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen', 'Ubuntu', 'Cantarell', sans-serif;
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
-    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    background: linear-gradient(135deg, #f8fafc 0%, #e2e8f0 100%);
     min-height: 100vh;
+    overflow-x: hidden;
 }
 
-.app {
+/* App Container */
+.app-container {
     min-height: 100vh;
     display: flex;
     flex-direction: column;
-    background: linear-gradient(135deg, #f0f4f8 0%, #e2e8f0 100%);
+}
+
+.main-content {
+    flex: 1;
+    min-height: 0;
+    padding: 20px;
+}
+
+/* Special layout for Meeting Monitor - no padding for full experience */
+.main-content-meeting {
+    flex: 1;
+    min-height: 0;
+    padding: 0;
+}
+
+/* Global Animation Classes */
+@keyframes fadeIn {
+    from {
+        opacity: 0;
+        transform: translateY(20px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+@keyframes slideIn {
+    from {
+        opacity: 0;
+        transform: translateX(-20px);
+    }
+    to {
+        opacity: 1;
+        transform: translateX(0);
+    }
+}
+
+.fade-in {
+    animation: fadeIn 0.3s ease-out;
+}
+
+.slide-in {
+    animation: slideIn 0.3s ease-out;
 }
 
 

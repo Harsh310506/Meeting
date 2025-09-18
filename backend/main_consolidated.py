@@ -26,17 +26,23 @@ import numpy as np
 import soundfile as sf
 import uvicorn
 import webrtcvad
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, UploadFile, File, HTTPException
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, UploadFile, File, HTTPException, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from faster_whisper import WhisperModel
+import jwt as PyJWT
+import bcrypt
+from pydantic import BaseModel
+import uuid
+from datetime import datetime, timedelta, timezone
 
 # Enhanced NLP dependencies for transcript analysis
 import re
 import spacy
 from textblob import TextBlob
-from gensim import corpora
-from gensim.models import LdaModel
+# from gensim import corpora
+# from gensim.models import LdaModel
 from nltk.corpus import stopwords
 from nltk.tokenize import word_tokenize
 import nltk
@@ -988,52 +994,11 @@ class EnhancedTranscriptAnalyzer:
                         if w.isalpha() and w.lower() not in stop_words and len(w) > 2
                     ]
                 
-                if len(tokens) > 10:  # Minimum tokens for topic modeling
-                    dictionary = corpora.Dictionary([tokens])
-                    corpus = [dictionary.doc2bow(tokens)]
-                    
-                    lda_model = LdaModel(
-                        corpus=corpus,
-                        id2word=dictionary,
-                        num_topics=5,        # Pre-tuned for meetings
-                        passes=15,           # Stable topic generation
-                        alpha='auto',
-                        eta='auto',
-                        random_state=42
-                    )
-                    
-                    topics = lda_model.print_topics(num_words=6)
-                    
-                    # Extract and format topics in a user-friendly way
-                    topic_themes = []
-                    for i, (topic_id, topic_string) in enumerate(topics):
-                        # Extract the most important words from the topic string
-                        words = []
-                        # Parse the topic string to extract words
-                        word_matches = re.findall(r'"([^"]+)"', topic_string)
-                        if word_matches:
-                            # Take top 3 most relevant words
-                            top_words = word_matches[:3]
-                            # Create a theme description
-                            if any(word in ['meeting', 'review', 'business'] for word in top_words):
-                                theme = "Business Review & Strategy"
-                            elif any(word in ['kpi', 'roi', 'cost', 'metrics'] for word in top_words):
-                                theme = "Performance Metrics & Analysis"
-                            elif any(word in ['customer', 'acquisition', 'crm'] for word in top_words):
-                                theme = "Customer Management & Growth"
-                            elif any(word in ['api', 'system', 'integration', 'implementation'] for word in top_words):
-                                theme = "Technology & Implementation"
-                            elif any(word in ['ceo', 'margins', 'ebitda', 'financial'] for word in top_words):
-                                theme = "Leadership & Financial Performance"
-                            else:
-                                # Generic theme based on key words
-                                theme = f"Focus on {', '.join(top_words[:2]).title()}"
-                            topic_themes.append(theme)
-                    
-                    if topic_themes:
-                        topic_summary = " | ".join(topic_themes[:3])  # Show top 3 themes
-                    else:
-                        topic_summary = "Meeting discussion topics"
+                if len(tokens) > 10:  # Minimum tokens for topic modeling - DISABLED
+                    # Topic modeling temporarily disabled due to gensim/numpy compatibility
+                    topic_summary = "Topic modeling temporarily unavailable"
+                else:
+                    topic_summary = "Not enough content for topic analysis"
                 
             except Exception as e:
                 logger.warning(f"Topic modeling failed: {e}")
@@ -1487,9 +1452,9 @@ class VADProcessor:
 class AudioBuffer:
     """Manages audio chunks and creates segments for transcription"""
     
-    def __init__(self, sample_rate: int = 48000, segment_duration: float = 6.0, max_buffer_duration: float = 30.0):
-        self.sample_rate = sample_rate
-        self.segment_duration = segment_duration
+    def __init__(self, sample_rate: int = 16000, segment_duration: float = 3.0, max_buffer_duration: float = 15.0):
+        self.sample_rate = sample_rate  # Match frontend: 16kHz
+        self.segment_duration = segment_duration  # Reduced to 3s for faster response
         self.segment_samples = int(sample_rate * segment_duration)
         self.max_buffer_duration = max_buffer_duration
         
@@ -1497,7 +1462,13 @@ class AudioBuffer:
         self.current_segment = []
         self.speech_frames = 0
         self.silence_frames = 0
-        self.min_speech_frames = int(0.3 * 1000 / 30)  # 300ms of speech
+        self.min_speech_frames = int(0.2 * 1000 / 30)  # Reduced to 200ms of speech (more sensitive)
+        self.max_silence_frames = int(0.5 * 1000 / 30)  # Reduced to 500ms of silence (faster response)
+        
+        self.vad = VADProcessor(sample_rate)
+        self.total_duration = 0.0
+        
+        print(f"🎤 AudioBuffer initialized: {sample_rate}Hz, {segment_duration}s segments, min_speech: {self.min_speech_frames} frames")
         self.max_silence_frames = int(1.0 * 1000 / 30)  # 1s of silence
         
         self.vad = VADProcessor(sample_rate)
@@ -1529,10 +1500,17 @@ class AudioBuffer:
         # Check if we should create a segment
         if (self.speech_frames >= self.min_speech_frames and 
             self.silence_frames >= self.max_silence_frames):
+            print(f"🎯 VAD triggered segment: speech_frames={self.speech_frames}, silence_frames={self.silence_frames}")
             return self._create_segment()
         
-        # Force segment creation if buffer is getting full
-        if len(self.buffer) >= int(self.segment_samples / (self.sample_rate * 0.1)):
+        # Force segment creation based on duration (fallback for VAD issues)
+        if self.total_duration >= self.segment_duration:
+            print(f"🎯 Duration triggered segment: {self.total_duration:.2f}s >= {self.segment_duration}s")
+            return self._create_segment()
+        
+        # Force segment creation if buffer is getting full (chunks-based fallback)
+        if len(self.buffer) >= 100:  # About 6.25 seconds at 16kHz with 4096 sample chunks
+            print(f"🎯 Chunk count triggered segment: {len(self.buffer)} chunks")
             return self._create_segment()
         
         return None
@@ -1599,101 +1577,157 @@ class WhisperASR:
         threading.Thread(target=self._load_model, daemon=True).start()
     
     def _load_model(self):
-        """Load Enhanced Whisper model with intelligent device selection"""
-        logger.info("🚀 Loading Whisper model with automatic device detection...")
+        """Load Enhanced Whisper model with CUDA 11.8 compatibility"""
+        logger.info("🚀 Loading Whisper model with CUDA 11.8 compatibility...")
         
-        # Check CUDA availability more thoroughly
+        # Enhanced CUDA validation for CUDA 11.8
         cuda_available = False
         try:
             import torch
-            cuda_available = torch.cuda.is_available()
-            if cuda_available:
+            import os
+            
+            # Check PyTorch CUDA availability
+            if torch.cuda.is_available():
+                cuda_version = torch.version.cuda
                 logger.info(f"🔥 CUDA detected: {torch.cuda.get_device_name(0)}")
                 logger.info(f"💾 GPU Memory: {torch.cuda.get_device_properties(0).total_memory / 1e9:.1f} GB")
-                logger.info(f"🔢 PyTorch CUDA version: {torch.version.cuda}")
+                logger.info(f"🔢 PyTorch CUDA version: {cuda_version}")
                 
-                # Check for cuDNN availability
-                try:
-                    cudnn_version = torch.backends.cudnn.version()
-                    logger.info(f"✅ cuDNN {cudnn_version} available")
-                except Exception as cudnn_error:
-                    logger.warning(f"⚠️ cuDNN check failed: {cudnn_error}")
-                    logger.error("❌ cuDNN library missing or incompatible!")
-                    logger.error("📦 SOLUTION: Install compatible CUDA Toolkit and cuDNN:")
-                    logger.error("   For your PyTorch version:")
-                    logger.error("   1. CUDA Toolkit 12.4: https://developer.nvidia.com/cuda-12-4-0-download-archive")
-                    logger.error("   2. cuDNN 9.1.0 for CUDA 12.x: https://developer.nvidia.com/cudnn-downloads")
-                    logger.error("   3. Extract cuDNN files to CUDA installation directory:")
-                    logger.error("      - Copy bin\\*.dll to CUDA\\v12.4\\bin\\")
-                    logger.error("      - Copy include\\*.h to CUDA\\v12.4\\include\\")
-                    logger.error("      - Copy lib\\*.lib to CUDA\\v12.4\\lib\\x64\\")
-                    logger.error("   4. Add C:\\Program Files\\NVIDIA GPU Computing Toolkit\\CUDA\\v12.4\\bin to PATH")
-                    logger.error("   5. Restart your terminal and IDE")
-                    logger.warning("🔄 Falling back to CPU mode for now...")
+                # Check for CUDA 11.8 libraries specifically
+                cuda_paths = [
+                    "C:\\Program Files\\NVIDIA GPU Computing Toolkit\\CUDA\\v11.8\\bin",
+                    "C:\\Program Files\\NVIDIA GPU Computing Toolkit\\CUDA\\v12.4\\bin",  # Fallback
+                    os.environ.get("CUDA_PATH", "") + "\\bin" if os.environ.get("CUDA_PATH") else ""
+                ]
+                
+                cublas_found = False
+                cublas_path = None
+                
+                # Look for cuBLAS libraries
+                for path in cuda_paths:
+                    if os.path.exists(path):
+                        # Check for CUDA 11.8 cuBLAS first
+                        cublas11_path = os.path.join(path, "cublas64_11.dll")
+                        cublas12_path = os.path.join(path, "cublas64_12.dll")
+                        
+                        if os.path.exists(cublas11_path):
+                            cublas_found = True
+                            cublas_path = cublas11_path
+                            logger.info(f"✅ Found CUDA 11.8 cuBLAS: {cublas11_path}")
+                            break
+                        elif os.path.exists(cublas12_path):
+                            cublas_found = True
+                            cublas_path = cublas12_path
+                            logger.info(f"✅ Found CUDA 12.x cuBLAS: {cublas12_path}")
+                            break
+                
+                if cublas_found:
+                    # Force environment to use the correct CUDA path
+                    cuda_bin_dir = os.path.dirname(cublas_path)
+                    current_path = os.environ.get("PATH", "")
+                    if cuda_bin_dir not in current_path:
+                        os.environ["PATH"] = cuda_bin_dir + ";" + current_path
+                        logger.info(f"🔧 Added CUDA path to environment: {cuda_bin_dir}")
+                    
+                    # Set CUDA environment variables for compatibility
+                    os.environ["CUDA_HOME"] = os.path.dirname(cuda_bin_dir)
+                    os.environ["CUDA_PATH"] = os.path.dirname(cuda_bin_dir)
+                    
+                    # Test CUDA tensor operations
+                    try:
+                        # Force CUDA 11.8 environment before PyTorch operations
+                        cuda_11_path = "C:\\Program Files\\NVIDIA GPU Computing Toolkit\\CUDA\\v11.8\\bin"
+                        if os.path.exists(cuda_11_path):
+                            current_path = os.environ.get("PATH", "")
+                            os.environ["PATH"] = cuda_11_path + ";" + current_path
+                            os.environ["CUDA_HOME"] = "C:\\Program Files\\NVIDIA GPU Computing Toolkit\\CUDA\\v11.8"
+                            logger.info(f"🔧 Forced CUDA 11.8 path: {cuda_11_path}")
+                        
+                        # Test CUDA operations with forced CUDA 11.8
+                        test_tensor = torch.randn(10, 10, device='cuda')
+                        test_result = torch.matmul(test_tensor, test_tensor)
+                        del test_tensor, test_result
+                        torch.cuda.empty_cache()
+                        
+                        cuda_available = True
+                        logger.info("✅ CUDA 11.8 validation successful - GPU acceleration enabled")
+                        
+                    except Exception as cuda_test_error:
+                        logger.error(f"❌ CUDA 11.8 tensor test failed: {cuda_test_error}")
+                        if "cublas64_12" in str(cuda_test_error):
+                            logger.error("🔧 Fix: pip install torch --index-url https://download.pytorch.org/whl/cu118 --force-reinstall")
+                        cuda_available = False
+                        raise RuntimeError(f"CUDA 11.8 required but not working properly: {cuda_test_error}")
+                else:
+                    logger.error("❌ No cuBLAS library found!")
+                    logger.error("📦 Please install CUDA Toolkit 11.8:")
+                    logger.error("   Download: https://developer.nvidia.com/cuda-11-8-0-download-archive")
                     cuda_available = False
             else:
-                logger.info("💻 CUDA not available")
-                logger.info("💡 To enable GPU acceleration:")
-                logger.info("   • Install NVIDIA GPU drivers (latest)")
-                logger.info("   • Install CUDA Toolkit 12.4")
-                logger.info("   • Install cuDNN 9.1.0 for CUDA 12.x")
-                logger.info("   • Restart system after installation")
-        except ImportError:
-            logger.warning("⚠️ PyTorch not available - using CPU mode")
+                logger.info("💻 CUDA not available in PyTorch")
+                
+        except Exception as e:
+            logger.warning(f"CUDA detection error: {e}")
+            cuda_available = False
         
-        # Smart model selection based on system capabilities
+        # Model loading with CUDA 11.8 compatibility
         if cuda_available:
-            # Try GPU first with conservative settings
             fallback_models = [
-                ("medium", "cuda", "int8"),  # Good balance for most GPUs
-                ("small", "cuda", "int8"),   # Lighter GPU option
-                ("medium", "cpu", "int8"),   # CPU fallback
-                ("small", "cpu", "int8")     # Minimum viable option
+                ("medium", "cuda", "int8"),
+                ("medium", "cpu", "int8"),
             ]
+            logger.info("🚀 Using CUDA 11.8 GPU acceleration")
         else:
-            # CPU-first approach when CUDA issues detected
             fallback_models = [
-                ("medium", "cpu", "int8"),   # Good CPU performance
-                ("small", "cpu", "int8"),    # Lighter CPU option
-                ("base", "cpu", "int8")      # Fastest option
+                ("medium", "cpu", "int8"),
+                ("small", "cpu", "int8"),
             ]
+            logger.info("💻 Using CPU acceleration")
         
-        # Try models in order of preference
+        # Try models with enhanced error handling
         for model_size, device, compute_type in fallback_models:
             try:
                 logger.info(f"🔄 Loading {model_size} model on {device} ({compute_type})")
+                
+                # Additional environment setup for CUDA 11.8
+                if device == "cuda":
+                    os.environ["CUBLAS_WORKSPACE_CONFIG"] = ":4096:8"  # Deterministic operations
+                
                 with self._model_lock:
                     self.model = WhisperModel(
                         model_size, 
                         device=device, 
                         compute_type=compute_type,
                         cpu_threads=4 if device == "cpu" else 1,
-                        num_workers=1
+                        num_workers=1,
+                        download_root=None,  # Use default cache
+                        local_files_only=False
                     )
                 
                 self.model_size = model_size
                 self.device = device
                 self.compute_type = compute_type
-                logger.info(f"✅ Successfully loaded {model_size} model on {device}")
+                logger.info(f"✅ Successfully loaded {model_size} model on {device} with CUDA 11.8")
                 return
                 
             except Exception as e:
                 error_msg = str(e).lower()
-                if device == "cuda" and ("cudnn" in error_msg or "cuda" in error_msg):
-                    logger.error(f"❌ CUDA/cuDNN Error: {str(e)}")
-                    if "cudnn_ops" in error_msg:
-                        logger.error("💡 Missing cuDNN operations library!")
-                        logger.error("   Download and install cuDNN 9.1.0 from NVIDIA Developer")
-                    elif "out of memory" in error_msg:
-                        logger.error("💡 GPU out of memory! Try a smaller model or free up GPU memory")
-                    elif "invalid device" in error_msg:
-                        logger.error("💡 CUDA device not available! Check GPU drivers and CUDA installation")
+                
+                if "cublas64_12" in error_msg:
+                    logger.error(f"❌ CUDA 12.x library mismatch: {e}")
+                    logger.error("🔧 SOLUTION: Your system has CUDA 11.8, but the model needs CUDA 12.x libraries")
+                    logger.error("   Option 1: Reinstall PyTorch for CUDA 11.8:")
+                    logger.error("   pip install torch torchaudio --index-url https://download.pytorch.org/whl/cu118")
+                    logger.error("   Option 2: Update to CUDA 12.4 and install cublas64_12.dll")
+                elif "cublas64_11" in error_msg:
+                    logger.error(f"❌ CUDA 11.8 library issue: {e}")
+                    logger.error("🔧 Check if CUDA 11.8 bin directory is in PATH")
                 else:
-                    logger.warning(f"⚠️ Failed to load {model_size}/{device}: {str(e)[:100]}...")
+                    logger.warning(f"⚠️ Model loading failed: {e}")
+                
                 continue
         
-        # If we get here, all attempts failed
-        logger.error("❌ All Whisper model loading attempts failed")
+        logger.error("❌ All model loading attempts failed")
         self.model = None
     
     def clean_text(self, text: str) -> str:
@@ -1807,6 +1841,13 @@ class WhisperASR:
                 avg_confidence = sum(s["confidence"] for s in transcript_segments) / len(transcript_segments)
             else:
                 avg_confidence = 0.0
+            
+            # Debug: Log transcription results
+            print(f"🎯 Whisper Debug - Segments found: {len(transcript_segments)}/{total_segments}")
+            print(f"🎯 Whisper Debug - Full text: '{full_text}' (length: {len(full_text)})")
+            print(f"🎯 Whisper Debug - Language: {info.language} (confidence: {info.language_probability:.3f})")
+            if not full_text:
+                print(f"🎯 Whisper Debug - No text detected! Check if audio contains speech")
             
             return {
                 "text": full_text,
@@ -1934,7 +1975,16 @@ class ASRProcessor:
         # Add to buffer and check if segment is ready
         segment = self.audio_buffer.add_chunk(audio_np, timestamp)
         
+        # Debug: Log buffer status
+        if hasattr(self.audio_buffer, 'speech_frames') and hasattr(self.audio_buffer, 'silence_frames'):
+            if len(self.audio_buffer.buffer) % 20 == 0:  # Log every 20 chunks
+                print(f"🎯 Buffer Debug - Total chunks: {len(self.audio_buffer.buffer)}, "
+                      f"Speech frames: {self.audio_buffer.speech_frames}, "
+                      f"Silence frames: {self.audio_buffer.silence_frames}, "
+                      f"Duration: {self.audio_buffer.total_duration:.2f}s")
+        
         if segment and len(segment.data) > 0:
+            print(f"🎤 Segment ready for transcription: {len(segment.data)} samples, duration: {segment.duration:.2f}s")
             # Transcribe segment
             transcript = await self.whisper.transcribe_segment(segment)
             
@@ -1991,7 +2041,7 @@ def init_asr():
     global asr_processor
     try:
         print("🎯 Initializing ASR processor with medium model...")
-        asr_processor = ASRProcessor(sample_rate=48000)
+        asr_processor = ASRProcessor(sample_rate=16000)  # Match frontend sample rate
         asr_processor.set_session("websocket_session")
         print("✅ ASR processor initialized successfully with medium model")
         return True
@@ -2020,10 +2070,11 @@ async def broadcast_to_all(message_type: str, data: dict):
                 del connected_clients[client_id]
 
 async def handle_start_recording(client_id: str, data: dict, websocket: WebSocket):
-    """Handle start recording request"""
+    """Handle start recording request - transcript only, no audio file saving"""
     try:
         session_id = f"session_{int(time.time())}_{client_id}"
-        capture_mode = data.get("captureMode", "camera")
+        capture_mode = data.get("captureMode", "microphone")
+        audio_only = data.get("audioOnly", True)
         
         # Create session
         session = {
@@ -2033,16 +2084,15 @@ async def handle_start_recording(client_id: str, data: dict, websocket: WebSocke
             "start_time": time.time(),
             "transcripts": [],
             "audio_chunks": 0,
-            "video_frames": 0
+            "audio_only": audio_only
         }
         
-        # Setup storage if enabled
+        # Setup storage for transcripts only
         if storage_enabled:
             session_path = os.path.join(storage_base_path, session_id)
             os.makedirs(session_path, exist_ok=True)
-            os.makedirs(os.path.join(session_path, "audio"), exist_ok=True)
-            os.makedirs(os.path.join(session_path, "video"), exist_ok=True)
             session["storage_path"] = session_path
+            print(f"🗂️ Transcript storage enabled: {session_path}")
         
         active_sessions[client_id] = session
         
@@ -2057,11 +2107,14 @@ async def handle_start_recording(client_id: str, data: dict, websocket: WebSocke
                 "session_id": session_id,
                 "capture_mode": capture_mode,
                 "recording_type": capture_mode,
-                "asr_enabled": asr_processor is not None and asr_processor.whisper.is_ready()
+                "asr_enabled": asr_processor is not None and asr_processor.whisper.is_ready(),
+                "audio_only": audio_only,
+                "storage_enabled": storage_enabled
             }
         }))
         
-        print(f"🎬 Recording started for {client_id}: {session_id}")
+        print(f"🎬 Audio-only recording started for {client_id}: {session_id}")
+        print(f"   ️ Storage path: {session.get('storage_path', 'None (storage disabled)')}")
         
     except Exception as e:
         print(f"❌ Error starting recording: {e}")
@@ -2249,29 +2302,29 @@ async def handle_stop_recording(client_id: str, websocket: WebSocket):
                 analysis_result = run_analysis_with_timeout()
                 
                 if analysis_result and "error" not in analysis_result:
-                        # Validate analysis result quality
-                        required_fields = ['entities', 'keywords', 'suggestions', 'jargon_analysis']
-                        missing_fields = [field for field in required_fields if field not in analysis_result]
-                        
-                        if missing_fields:
-                            print(f"⚠️ Warning: Analysis missing fields: {missing_fields}")
-                        
-                        enhanced_analysis = analysis_result
-                        
-                        # Generate summary with error handling
-                        try:
-                            enhanced_summary_paragraph = enhanced_analyzer.generate_summary_paragraph(analysis_result)
-                        except Exception as summary_error:
-                            print(f"⚠️ Summary generation failed: {summary_error}")
-                            enhanced_summary_paragraph = "**Enhanced Analysis:** Analysis completed but summary generation failed"
-                        
-                        print("✅ Enhanced analysis completed successfully")
+                    # Validate analysis result quality
+                    required_fields = ['entities', 'keywords', 'suggestions', 'jargon_analysis']
+                    missing_fields = [field for field in required_fields if field not in analysis_result]
+                    
+                    if missing_fields:
+                        print(f"⚠️ Warning: Analysis missing fields: {missing_fields}")
+                    
+                    enhanced_analysis = analysis_result
+                    
+                    # Generate summary with error handling
+                    try:
+                        enhanced_summary_paragraph = enhanced_analyzer.generate_summary_paragraph(analysis_result)
+                    except Exception as summary_error:
+                        print(f"⚠️ Summary generation failed: {summary_error}")
+                        enhanced_summary_paragraph = "**Enhanced Analysis:** Analysis completed but summary generation failed"
+                    
+                    print("✅ Enhanced analysis completed successfully")
                 else:
-                        error_msg = analysis_result.get('details', 'Unknown analysis error') if analysis_result else 'No analysis result returned'
-                        enhanced_summary_paragraph = f"**Enhanced Analysis Error:** {error_msg}"
-                        print(f"❌ Enhanced analysis failed: {error_msg}")
-                        # Provide fallback structure for frontend
-                        enhanced_analysis = None
+                    error_msg = analysis_result.get('details', 'Unknown analysis error') if analysis_result else 'No analysis result returned'
+                    enhanced_summary_paragraph = f"**Enhanced Analysis Error:** {error_msg}"
+                    print(f"❌ Enhanced analysis failed: {error_msg}")
+                    # Provide fallback structure for frontend
+                    enhanced_analysis = None
                         
             except Exception as e:
                 enhanced_summary_paragraph = f"**Enhanced Analysis Error:** {str(e)}"
@@ -2474,7 +2527,6 @@ async def handle_stop_recording(client_id: str, websocket: WebSocket):
                 "session_stats": {
                     "duration": f"{session['duration']:.1f}s",
                     "audio_chunks": session["audio_chunks"],
-                    "video_frames": session["video_frames"],
                     "transcript_count": len(session["transcripts"]),
                     "valid_transcript_count": len(valid_transcripts) if 'valid_transcripts' in locals() else len(session["transcripts"]),
                     "quality_ratio": quality_metrics["valid_transcript_segments"] / max(quality_metrics["total_transcript_segments"], 1)
@@ -2516,6 +2568,59 @@ async def handle_stop_recording(client_id: str, websocket: WebSocket):
         print(f"   📝 Transcript Segments: {quality_metrics['valid_transcript_segments']}/{quality_metrics['total_transcript_segments']} valid")
         print(f"   🎯 Overall Reliability: {response_data['enhanced_transcript_analysis']['quality_indicators']['analysis_reliability'].upper()}")
         
+        # Save transcript files to session folder
+        if storage_enabled and session.get("storage_path"):
+            try:
+                session_path = session["storage_path"]
+                
+                # Save original transcript
+                if original_transcript:
+                    original_file = os.path.join(session_path, "original_transcript.txt")
+                    with open(original_file, 'w', encoding='utf-8') as f:
+                        f.write(original_transcript)
+                    print(f"💾 Saved original transcript: {original_file}")
+                
+                # Save combined formatted transcript
+                if combined_transcript:
+                    combined_file = os.path.join(session_path, "formatted_transcript.txt")
+                    with open(combined_file, 'w', encoding='utf-8') as f:
+                        f.write(combined_transcript)
+                    print(f"💾 Saved formatted transcript: {combined_file}")
+                
+                # Save enhanced analysis if available
+                if enhanced_summary_paragraph:
+                    analysis_file = os.path.join(session_path, "enhanced_analysis.txt")
+                    with open(analysis_file, 'w', encoding='utf-8') as f:
+                        f.write(enhanced_summary_paragraph)
+                    print(f"💾 Saved enhanced analysis: {analysis_file}")
+                
+                # Save sentiment analysis if available
+                if sentiment_summary:
+                    sentiment_file = os.path.join(session_path, "sentiment_analysis.txt")
+                    with open(sentiment_file, 'w', encoding='utf-8') as f:
+                        f.write(sentiment_summary)
+                    print(f"💾 Saved sentiment analysis: {sentiment_file}")
+                
+                # Save complete session data as JSON
+                session_json_file = os.path.join(session_path, "session_data.json")
+                session_data_export = {
+                    "session_id": session["session_id"],
+                    "duration": session.get("duration", 0),
+                    "audio_chunks": session.get("audio_chunks", 0),
+                    "transcript_count": len(valid_transcripts),
+                    "quality_metrics": quality_metrics,
+                    "transcripts": valid_transcripts,
+                    "enhanced_analysis": enhanced_analysis if enhanced_analysis else None,
+                    "sentiment_analysis": sentiment_analysis if sentiment_analysis else None
+                }
+                
+                with open(session_json_file, 'w', encoding='utf-8') as f:
+                    json.dump(session_data_export, f, indent=2, ensure_ascii=False)
+                print(f"💾 Saved session data: {session_json_file}")
+                
+            except Exception as save_error:
+                print(f"❌ Error saving transcript files: {save_error}")
+        
         del active_sessions[client_id]
         
     except Exception as e:
@@ -2535,6 +2640,14 @@ async def handle_audio_chunk(client_id: str, data: dict):
         audio_data = data.get('audio', [])
         timestamp = data.get('timestamp', time.time())
         speaker = data.get('speaker', 'unknown')
+        sample_rate = data.get('sample_rate', 48000)
+        
+        # Debug: Log audio data info every 10 chunks
+        if session["audio_chunks"] % 10 == 0:
+            print(f"🔊 Audio Debug - Chunk #{session['audio_chunks']}: {len(audio_data)} samples, rate: {sample_rate}Hz")
+            if audio_data:
+                audio_array = np.array(audio_data)
+                print(f"🔊 Audio Level - Min: {audio_array.min():.4f}, Max: {audio_array.max():.4f}, Mean: {audio_array.mean():.4f}")
         
         # Process with ASR if available and ready
         if asr_processor and asr_processor.whisper.is_ready() and audio_data:
@@ -2567,6 +2680,80 @@ async def handle_audio_chunk(client_id: str, data: dict):
         print(f"❌ Error processing audio chunk: {e}")
 
 # ============================================================================
+# AUTHENTICATION MODELS AND CONFIGURATION
+# ============================================================================
+
+# JWT Secret key (in production, use environment variable)
+JWT_SECRET_KEY = "your-secret-key-change-in-production"
+JWT_ALGORITHM = "HS256"
+JWT_EXPIRATION_DELTA = timedelta(days=30)
+
+# Security
+security = HTTPBearer()
+
+# Pydantic models for authentication
+class UserRegistration(BaseModel):
+    firstName: str
+    lastName: str
+    email: str
+    password: str
+
+class UserLogin(BaseModel):
+    email: str
+    password: str
+
+class UserProfile(BaseModel):
+    firstName: str
+    lastName: str
+    email: str
+
+class PasswordChange(BaseModel):
+    currentPassword: str
+    newPassword: str
+
+# In-memory user storage (in production, use a real database)
+users_db = {}
+
+# Helper functions
+def hash_password(password: str) -> str:
+    """Hash a password using bcrypt"""
+    return bcrypt.hashpw(password.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
+
+def verify_password(password: str, hashed: str) -> bool:
+    """Verify a password against its hash"""
+    return bcrypt.checkpw(password.encode('utf-8'), hashed.encode('utf-8'))
+
+def create_jwt_token(user_data: dict) -> str:
+    """Create a JWT token for a user"""
+    payload = {
+        "user_id": user_data["id"],
+        "email": user_data["email"],
+        "exp": datetime.now(timezone.utc) + JWT_EXPIRATION_DELTA
+    }
+    return PyJWT.encode(payload, JWT_SECRET_KEY, algorithm=JWT_ALGORITHM)
+
+def verify_jwt_token(token: str) -> dict:
+    """Verify and decode a JWT token"""
+    try:
+        payload = PyJWT.decode(token, JWT_SECRET_KEY, algorithms=[JWT_ALGORITHM])
+        return payload
+    except PyJWT.ExpiredSignatureError:
+        raise HTTPException(status_code=401, detail="Token has expired")
+    except PyJWT.InvalidTokenError:
+        raise HTTPException(status_code=401, detail="Invalid token")
+
+def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(security)):
+    """Get the current authenticated user"""
+    try:
+        payload = verify_jwt_token(credentials.credentials)
+        user_id = payload.get("user_id")
+        if user_id not in users_db:
+            raise HTTPException(status_code=401, detail="User not found")
+        return users_db[user_id]
+    except Exception as e:
+        raise HTTPException(status_code=401, detail="Invalid authentication")
+
+# ============================================================================
 # API ENDPOINTS
 # ============================================================================
 
@@ -2580,6 +2767,149 @@ async def root():
         "asr_model": f"whisper-{asr_processor.whisper.model_size}" if asr_processor else "not loaded",
         "connected_clients": len(connected_clients),
         "active_sessions": len(active_sessions)
+    }
+
+# ============================================================================
+# AUTHENTICATION ENDPOINTS
+# ============================================================================
+
+@app.post("/api/auth/register")
+async def register_user(user_data: UserRegistration):
+    """Register a new user"""
+    try:
+        # Validate input data
+        if not user_data.email or not user_data.email.strip():
+            raise HTTPException(status_code=400, detail="Email is required")
+        if not user_data.password or len(user_data.password.strip()) < 6:
+            raise HTTPException(status_code=400, detail="Password must be at least 6 characters")
+        if not user_data.firstName or not user_data.firstName.strip():
+            raise HTTPException(status_code=400, detail="First name is required")
+        if not user_data.lastName or not user_data.lastName.strip():
+            raise HTTPException(status_code=400, detail="Last name is required")
+        
+        # Validate email format
+        import re
+        email_pattern = r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$'
+        if not re.match(email_pattern, user_data.email.strip()):
+            raise HTTPException(status_code=400, detail="Invalid email format")
+        
+        # Check if user already exists
+        for user in users_db.values():
+            if user["email"].lower() == user_data.email.lower().strip():
+                raise HTTPException(status_code=400, detail="Email already registered")
+        
+        # Create new user
+        user_id = str(uuid.uuid4())
+        hashed_password = hash_password(user_data.password.strip())
+        
+        new_user = {
+            "id": user_id,
+            "firstName": user_data.firstName.strip(),
+            "lastName": user_data.lastName.strip(),
+            "email": user_data.email.lower().strip(),
+            "password": hashed_password,
+            "createdAt": datetime.now(timezone.utc).isoformat(),
+            "updatedAt": datetime.now(timezone.utc).isoformat()
+        }
+        
+        users_db[user_id] = new_user
+        
+        # Generate token
+        token = create_jwt_token(new_user)
+        
+        # Return user data without password
+        user_response = {k: v for k, v in new_user.items() if k != "password"}
+        
+        return {
+            "success": True,
+            "user": user_response,
+            "token": token
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"Registration error: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
+
+@app.post("/api/auth/login")
+async def login_user(user_data: UserLogin):
+    """Login a user"""
+    # Find user by email
+    user = None
+    for u in users_db.values():
+        if u["email"] == user_data.email:
+            user = u
+            break
+    
+    if not user:
+        raise HTTPException(status_code=401, detail="Invalid email or password")
+    
+    # Verify password
+    if not verify_password(user_data.password, user["password"]):
+        raise HTTPException(status_code=401, detail="Invalid email or password")
+    
+    # Generate token
+    token = create_jwt_token(user)
+    
+    # Return user data without password
+    user_response = {k: v for k, v in user.items() if k != "password"}
+    
+    return {
+        "success": True,
+        "user": user_response,
+        "token": token
+    }
+
+@app.get("/api/auth/profile")
+async def get_profile(current_user: dict = Depends(get_current_user)):
+    """Get current user's profile"""
+    user_response = {k: v for k, v in current_user.items() if k != "password"}
+    return {
+        "success": True,
+        "user": user_response
+    }
+
+@app.put("/api/auth/profile")
+async def update_profile(profile_data: UserProfile, current_user: dict = Depends(get_current_user)):
+    """Update current user's profile"""
+    # Check if new email is already taken by another user
+    if profile_data.email != current_user["email"]:
+        for user in users_db.values():
+            if user["email"] == profile_data.email and user["id"] != current_user["id"]:
+                raise HTTPException(status_code=400, detail="Email already taken")
+    
+    # Update user data
+    current_user["firstName"] = profile_data.firstName
+    current_user["lastName"] = profile_data.lastName
+    current_user["email"] = profile_data.email
+    current_user["updatedAt"] = datetime.utcnow().isoformat()
+    
+    # Return updated user data without password
+    user_response = {k: v for k, v in current_user.items() if k != "password"}
+    
+    return {
+        "success": True,
+        "user": user_response
+    }
+
+@app.post("/api/auth/change-password")
+async def change_password(password_data: PasswordChange, current_user: dict = Depends(get_current_user)):
+    """Change user's password"""
+    # Verify current password
+    if not verify_password(password_data.currentPassword, current_user["password"]):
+        raise HTTPException(status_code=400, detail="Current password is incorrect")
+    
+    # Hash new password
+    new_hashed_password = hash_password(password_data.newPassword)
+    
+    # Update password
+    current_user["password"] = new_hashed_password
+    current_user["updatedAt"] = datetime.utcnow().isoformat()
+    
+    return {
+        "success": True,
+        "message": "Password changed successfully"
     }
 
 @app.get("/asr/status")
@@ -2789,12 +3119,19 @@ async def websocket_endpoint(websocket: WebSocket):
                     await handle_start_recording(client_id, message_data, websocket)
                 elif message_type == "stop_recording":
                     await handle_stop_recording(client_id, websocket)
-                elif message_type == "audio_chunk":
+                elif message_type == "audio_chunk" or message_type == "audio_data":
+                    # Handle both audio_chunk (legacy) and audio_data (frontend) formats
                     await handle_audio_chunk(client_id, message_data)
                 elif message_type == "video_frame":
-                    # Handle video frame (currently just count)
-                    if client_id in active_sessions:
-                        active_sessions[client_id]["video_frames"] += 1
+                    # Video frames are not processed in audio-only mode but acknowledge receipt
+                    pass
+                elif message_type == "test":
+                    # Handle test messages for connection verification
+                    await websocket.send_text(json.dumps({
+                        "type": "test_response",
+                        "message": "Test message received successfully",
+                        "timestamp": datetime.now().isoformat()
+                    }))
                 else:
                     print(f"❓ Unknown message type: {message_type}")
                     

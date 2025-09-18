@@ -71,13 +71,11 @@ function App() {
   const [sentimentAnalysis, setSentimentAnalysis] = useState(null);
   const [sentimentSummary, setSentimentSummary] = useState('');
   
-  const videoRef = useRef(null);
   const fileInputRef = useRef(null);
   const socketRef = useRef(null);
   const streamRef = useRef(null);
   const audioContextRef = useRef(null);
   const processorRef = useRef(null);
-  const videoIntervalRef = useRef(null);
   const isRecordingRef = useRef(false);
 
   useEffect(() => {
@@ -439,16 +437,10 @@ function App() {
 
   const startCameraRecording = async () => {
     try {
-      console.log('🎥 Requesting camera and microphone access...');
+      console.log('� Requesting microphone access for audio-only recording...');
       
-      // Try with higher quality constraints for better video clarity
+      // Audio-only constraints for better quality audio capture
       const constraints = {
-        video: {
-          width: { ideal: 1280, min: 640 },
-          height: { ideal: 720, min: 480 },
-          frameRate: { ideal: 30, min: 15 },
-          facingMode: 'user'
-        },
         audio: {
           echoCancellation: true,
           noiseSuppression: true,
@@ -460,82 +452,129 @@ function App() {
 
       const stream = await navigator.mediaDevices.getUserMedia(constraints);
       
-      console.log('✅ Media stream obtained:', {
-        videoTracks: stream.getVideoTracks().length,
+      console.log('✅ Audio stream obtained:', {
         audioTracks: stream.getAudioTracks().length,
-        videoTrackSettings: stream.getVideoTracks()[0]?.getSettings(),
         audioSettings: stream.getAudioTracks()[0]?.getSettings()
       });
       
-      // Log video track details
-      if (stream.getVideoTracks().length > 0) {
-        const videoTrack = stream.getVideoTracks()[0];
-        console.log('📹 Video track details:', {
-          label: videoTrack.label,
-          enabled: videoTrack.enabled,
-          readyState: videoTrack.readyState,
-          muted: videoTrack.muted
+      // Log audio track details
+      if (stream.getAudioTracks().length > 0) {
+        const audioTrack = stream.getAudioTracks()[0];
+        console.log('🎤 Audio track details:', {
+          label: audioTrack.label,
+          enabled: audioTrack.enabled,
+          readyState: audioTrack.readyState,
+          muted: audioTrack.muted
         });
       }
       
-      setCurrentMode('camera');
-      startRecording(stream, 'camera');
+      setCurrentMode('microphone');
+      startRecording(stream, 'microphone');
     } catch (error) {
-      console.error('❌ Camera/microphone access error:', error);
+      console.error('❌ Microphone access error:', error);
       
-      // Try audio-only if video fails
       if (error.name === 'NotFoundError' || error.name === 'DevicesNotFoundError') {
-        try {
-          console.log('🎤 Trying audio-only recording...');
-          const audioStream = await navigator.mediaDevices.getUserMedia({ audio: true });
-          setCurrentMode('audio-only');
-          startRecording(audioStream, 'camera');
-          alert('Camera not available, recording audio only');
-        } catch (audioError) {
-          alert('Microphone access denied: ' + audioError.message);
-        }
+        alert('Microphone not found. Please check your microphone connection.');
       } else if (error.name === 'NotAllowedError') {
-        alert('Camera/microphone access denied. Please allow access and try again.');
+        alert('Microphone access denied. Please allow access and try again.');
       } else {
-        alert('Camera access error: ' + error.message);
+        alert('Microphone access error: ' + error.message);
       }
     }
   };
 
   const startScreenRecording = async () => {
     try {
-      console.log('🖥️ Starting screen recording with system audio + microphone...');
+      console.log('🖥️ Starting screen audio recording for meeting capture...');
       
-      // Step 1: Get screen video + system audio (captures meeting audio)
-      const screenStream = await navigator.mediaDevices.getDisplayMedia({
-        video: {
-          width: { ideal: 1920 },
-          height: { ideal: 1080 },
-          frameRate: { ideal: 10 }
-        },
-        audio: {
-          echoCancellation: false,
-          noiseSuppression: false,
-          autoGainControl: false,
-          suppressLocalAudioPlayback: false
+      // Step 1: Request screen share with audio (better approach for system audio)
+      let systemAudioStream = null;
+      try {
+        console.log('🎵 Requesting screen share with system audio...');
+        
+        // First attempt: Try with video enabled to get reliable audio capture
+        const screenShare = await navigator.mediaDevices.getDisplayMedia({
+          video: {
+            width: { ideal: 1 },  // Minimal video to enable audio
+            height: { ideal: 1 }
+          },
+          audio: {
+            echoCancellation: false,
+            noiseSuppression: false,
+            autoGainControl: false,
+            suppressLocalAudioPlayback: false,
+            sampleRate: { ideal: 48000 },
+            channelCount: { ideal: 2 } // Stereo for better meeting audio
+          }
+        });
+        
+        // Extract only the audio tracks and stop video
+        const audioTracks = screenShare.getAudioTracks();
+        const videoTracks = screenShare.getVideoTracks();
+        
+        // Stop video tracks immediately since we don't need video
+        videoTracks.forEach(track => track.stop());
+        
+        if (audioTracks.length > 0) {
+          // Create new stream with only audio
+          systemAudioStream = new MediaStream(audioTracks);
+          console.log('✅ System audio extracted successfully:', {
+            audioTracks: systemAudioStream.getAudioTracks().length,
+            systemAudioSettings: systemAudioStream.getAudioTracks()[0]?.getSettings()
+          });
+        } else {
+          console.warn('⚠️ No audio tracks found in screen share');
         }
-      });
-      
-      console.log('✅ Screen stream obtained:', {
-        videoTracks: screenStream.getVideoTracks().length,
-        audioTracks: screenStream.getAudioTracks().length,
-        systemAudioSettings: screenStream.getAudioTracks()[0]?.getSettings()
-      });
-      
-      // Alert user if no system audio captured
-      if (screenStream.getAudioTracks().length === 0) {
-        alert('⚠️ No system audio captured!\n\nTo record meeting participants:\n1. Click "Screen Recording" again\n2. In the sharing dialog, check "Share audio"\n3. Make sure to share the tab/window with the meeting');
-        console.warn('⚠️ No system audio tracks - user needs to enable "Share audio" in screen sharing dialog');
-      } else {
-        console.log('✅ System audio captured successfully - meeting participants will be recorded');
+        
+      } catch (systemError) {
+        console.warn('⚠️ Could not capture system audio:', systemError.message);
+        
+        // Fallback: Try audio-only approach
+        try {
+          console.log('🔄 Trying fallback audio-only approach...');
+          systemAudioStream = await navigator.mediaDevices.getDisplayMedia({
+            video: false,
+            audio: {
+              echoCancellation: false,
+              noiseSuppression: false,
+              autoGainControl: false,
+              suppressLocalAudioPlayback: false,
+              sampleRate: { ideal: 48000 },
+              channelCount: { ideal: 2 }
+            }
+          });
+        } catch (fallbackError) {
+          console.warn('⚠️ Fallback also failed:', fallbackError.message);
+        }
       }
       
-      // Step 2: Try to get microphone audio separately (for your voice)
+      // Step 2: Check if we got system audio and provide user guidance
+      if (!systemAudioStream || systemAudioStream.getAudioTracks().length === 0) {
+        const retryChoice = confirm(
+          '⚠️ No meeting audio captured!\n\n' +
+          'To record meeting participants:\n\n' +
+          '1. Click "OK" to try again\n' +
+          '2. In the screen sharing dialog:\n' +
+          '   • Select the TAB with your meeting (not entire screen)\n' +
+          '   • ✅ Check "Share audio" checkbox\n' +
+          '   • Click "Share"\n\n' +
+          'This is essential for capturing other participants!\n\n' +
+          'Click "Cancel" to record microphone only'
+        );
+        
+        if (retryChoice) {
+          // Recursive retry
+          return startScreenRecording();
+        } else {
+          console.log('📝 User chose to continue without system audio');
+        }
+      } else {
+        console.log('✅ System audio captured successfully - meeting participants will be recorded');
+        // Show success message
+        console.log('🎉 Meeting audio capture successful! Other participants will be recorded.');
+      }
+      
+      // Step 3: Always try to get microphone (for your voice)
       let micStream = null;
       try {
         micStream = await navigator.mediaDevices.getUserMedia({
@@ -553,45 +592,47 @@ function App() {
           micSettings: micStream.getAudioTracks()[0]?.getSettings()
         });
       } catch (micError) {
-        console.warn('⚠️ Microphone access denied, using system audio only:', micError.message);
+        console.warn('⚠️ Microphone access denied:', micError.message);
       }
       
-      // Step 3: Combine streams based on what's available
+      // Step 4: Combine audio streams based on what's available
       let finalStream;
       
-      if (screenStream.getAudioTracks().length > 0) {
+      if (systemAudioStream && systemAudioStream.getAudioTracks().length > 0) {
         // Has system audio - this captures meeting participants
         if (micStream && micStream.getAudioTracks().length > 0) {
           // Setup separate audio processing for speaker identification
-          finalStream = setupSeparateAudioProcessing(screenStream, micStream);
-          console.log('🎵 Using separate audio processing (You + Other)');
+          finalStream = setupSeparateAudioProcessing(systemAudioStream, micStream);
+          console.log('🎵 Using separate audio processing (System Audio + Microphone)');
+          console.log('🎤 Recording: Meeting participants + Your voice');
         } else {
           // System audio only (meeting participants but not your mic)
-          finalStream = screenStream;
+          finalStream = systemAudioStream;
           console.log('🎵 Using system audio only (meeting participants)');
+          console.log('🎤 Recording: Meeting participants only');
         }
       } else if (micStream && micStream.getAudioTracks().length > 0) {
         // Microphone only as fallback
-        finalStream = new MediaStream([
-          ...screenStream.getVideoTracks(),
-          ...micStream.getAudioTracks()
-        ]);
-        console.log('🎵 Using microphone audio only');
+        finalStream = micStream;
+        console.log('🎵 Using microphone audio only (fallback)');
+        alert('⚠️ Recording microphone only. Meeting participants will NOT be captured.\n\nTo capture meeting audio:\n1. Stop recording\n2. Restart and enable "Share audio" when sharing your screen');
       } else {
         // No audio at all
-        finalStream = screenStream;
-        console.log('🔇 No audio streams available');
+        alert('❌ No audio sources available. Please allow microphone access or enable system audio sharing.');
+        return;
       }
       
       // Store streams for cleanup
       if (micStream) {
         finalStream.microphoneStream = micStream;
       }
-      finalStream.screenStream = screenStream;
+      if (systemAudioStream) {
+        finalStream.screenStream = systemAudioStream;
+      }
       
       // Set audio sources status for UI
       setAudioSources({
-        system: screenStream.getAudioTracks().length > 0,
+        system: systemAudioStream && systemAudioStream.getAudioTracks().length > 0,
         microphone: micStream && micStream.getAudioTracks().length > 0
       });
       
@@ -600,8 +641,8 @@ function App() {
       startRecording(finalStream, 'screen');
       
     } catch (error) {
-      console.error('❌ Screen recording error:', error);
-      alert('Screen recording access denied: ' + error.message + '\n\nMake sure to:\n1. Allow screen sharing\n2. Select "Share audio" checkbox\n3. Allow microphone access');
+      console.error('❌ Screen audio recording error:', error);
+      alert('Screen audio recording failed: ' + error.message + '\n\nTroubleshooting:\n1. Make sure you\'re using Chrome/Edge (Firefox has limited support)\n2. Allow screen sharing when prompted\n3. ✅ Check "Share audio" in the sharing dialog\n4. Select the TAB with your meeting (not entire screen)\n5. Allow microphone access');
     }
   };
 
@@ -743,40 +784,18 @@ function App() {
     
     const recordingMode = mode || currentMode;
     
-    // Set video source with better error handling and retry mechanism
-    const setVideoStream = () => {
-      if (videoRef.current && stream.getVideoTracks().length > 0) {
-        console.log('📹 Setting video stream to video element');
-        videoRef.current.srcObject = stream;
-        
-        // Ensure video plays
-        videoRef.current.play().catch(e => {
-          console.warn('⚠️ Video autoplay failed, user interaction may be required:', e);
-        });
-        
-        console.log('✅ Video stream set successfully');
-      } else {
-        console.log('⚠️ No video tracks available or videoRef not ready:', {
-          videoTracks: stream.getVideoTracks().length,
-          videoRefReady: !!videoRef.current
-        });
-        
-        // Retry after a short delay if videoRef is not ready yet
-        if (!videoRef.current && stream.getVideoTracks().length > 0) {
-          setTimeout(setVideoStream, 100);
-        }
-      }
-    };
-    
-    setVideoStream();
+    // Audio-only setup - no video handling
+    console.log('🎤 Setting up audio-only recording mode');
 
-    // Only setup audio streaming for camera mode or if separate processing isn't already set up
-    if (stream.getAudioTracks().length > 0 && recordingMode !== 'screen') {
-      // For camera recording, everything is "you" 
-      setupAudioStreamingWithSpeaker(stream, 'you', recordingMode);
-    } else if (recordingMode === 'screen' && !stream.systemAudioContext && !stream.micAudioContext) {
-      // Screen recording fallback if separate processing failed
-      setupAudioStreamingWithSpeaker(stream, 'mixed', recordingMode);
+    // Setup audio streaming with speaker identification
+    if (stream.getAudioTracks().length > 0) {
+      if (recordingMode === 'microphone') {
+        // For microphone recording, everything is "you" 
+        setupAudioStreamingWithSpeaker(stream, 'you', recordingMode);
+      } else if (recordingMode === 'screen' && !stream.systemAudioContext && !stream.micAudioContext) {
+        // Screen recording fallback if separate processing failed
+        setupAudioStreamingWithSpeaker(stream, 'mixed', recordingMode);
+      }
     }
 
     setIsRecording(true);
@@ -784,7 +803,7 @@ function App() {
 
     // Reset counters and session state when starting new recording
     setAudioChunkCount(0);
-    setVideoFrameCount(0);
+    setVideoFrameCount(0); // Keep for compatibility but won't be used
     
     // Clear any existing captions to prevent key conflicts
     setCaptions([]);
@@ -796,15 +815,7 @@ function App() {
     setShowTranscriptViewer(false);
     setCurrentSessionId(null); // Will be set when backend responds
 
-    // Start video capture if video tracks are available
-    if (stream.getVideoTracks().length > 0) {
-      // Wait a moment for video to be ready
-      setTimeout(() => {
-        setupVideoCapture();
-      }, 500);
-    }
-
-    // Send start recording message - this will generate a new session ID
+    // Send start recording message - audio only, no file saving
     if (socketRef.current && socketRef.current.readyState === WebSocket.OPEN) {
       const startMessage = {
         type: 'start_recording',
@@ -812,11 +823,12 @@ function App() {
           mode: recordingMode,
           captureMode: recordingMode,
           timestamp: Date.now(),
-          recordingType: mode === 'camera' ? 'camera' : mode === 'screen' ? 'screen' : 'unknown'
+          recordingType: mode === 'microphone' ? 'microphone' : mode === 'screen' ? 'screen_audio' : 'audio',
+          audioOnly: true
         }
       };
       
-      console.log('🎬 Starting new recording session:', startMessage);
+      console.log('🎬 Starting new audio-only recording session:', startMessage);
       socketRef.current.send(JSON.stringify(startMessage));
     }
   };
@@ -977,59 +989,6 @@ function App() {
     }
   };
 
-  const setupVideoCapture = () => {
-    if (!videoRef.current) return;
-    
-    const frameRate = currentMode === 'screen' ? 200 : 100; // ms between frames
-    
-    const captureFrame = () => {
-      if (!isRecordingRef.current || !videoRef.current || !socketRef.current || 
-          socketRef.current.readyState !== WebSocket.OPEN) {
-        return;
-      }
-
-      try {
-        const canvas = document.createElement('canvas');
-        const context = canvas.getContext('2d');
-        
-        if (currentMode === 'screen') {
-          canvas.width = videoRef.current.videoWidth || 1920;
-          canvas.height = videoRef.current.videoHeight || 1080;
-        } else {
-          canvas.width = videoRef.current.videoWidth || 640;
-          canvas.height = videoRef.current.videoHeight || 480;
-        }
-        
-        context.drawImage(videoRef.current, 0, 0, canvas.width, canvas.height);
-        
-        const quality = currentMode === 'screen' ? 0.5 : 0.8;
-        const imageData = canvas.toDataURL('image/jpeg', quality);
-        
-        socketRef.current.send(JSON.stringify({
-          type: 'video_frame',
-          data: {
-            frame: imageData,
-            width: canvas.width,
-            height: canvas.height,
-            timestamp: Date.now(),
-            mode: currentMode
-          }
-        }));
-        
-        // Update video frame counter
-        setVideoFrameCount(prev => prev + 1);
-        
-        console.log('🎥 Video frame sent:', canvas.width + 'x' + canvas.height);
-        
-      } catch (error) {
-        console.error('❌ Error capturing video frame:', error);
-      }
-    };
-
-    // Start video capture with interval
-    videoIntervalRef.current = setInterval(captureFrame, frameRate);
-  };
-
   const stopRecording = () => {
     setIsRecording(false);
     isRecordingRef.current = false;
@@ -1073,14 +1032,7 @@ function App() {
       audioContextRef.current = null;
     }
 
-    if (videoIntervalRef.current) {
-      clearInterval(videoIntervalRef.current);
-      videoIntervalRef.current = null;
-    }
-
-    if (videoRef.current) {
-      videoRef.current.srcObject = null;
-    }
+    // No video capture interval to clean up in audio-only mode
 
     if (socketRef.current && socketRef.current.readyState === WebSocket.OPEN) {
       socketRef.current.send(JSON.stringify({
@@ -2045,42 +1997,95 @@ function App() {
               overflow: 'hidden'
             }}>
               {isRecording ? (
-                <video
-                  ref={videoRef}
-                  autoPlay
-                  muted
-                  playsInline
-                  onLoadedMetadata={() => {
-                    console.log('✅ Video metadata loaded');
-                    if (videoRef.current) {
-                      console.log('📹 Video dimensions:', {
-                        videoWidth: videoRef.current.videoWidth,
-                        videoHeight: videoRef.current.videoHeight,
-                        srcObject: !!videoRef.current.srcObject
-                      });
-                    }
-                  }}
-                  onError={(e) => {
-                    console.error('❌ Video error:', e);
-                  }}
-                  style={{
-                    maxWidth: '100%',
-                    maxHeight: '100%',
-                    width: 'auto',
-                    height: 'auto',
-                    objectFit: 'contain',
-                    borderRadius: '10px',
-                    backgroundColor: '#000'
-                  }}
-                />
+                <div style={{
+                  display: 'flex',
+                  flexDirection: 'column',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  textAlign: 'center',
+                  padding: '20px',
+                  color: '#374151'
+                }}>
+                  <div style={{ 
+                    fontSize: '64px', 
+                    marginBottom: '16px',
+                    animation: microphoneActive ? 'pulse 1s infinite' : 'none'
+                  }}>
+                    {microphoneActive ? '🎤' : '�'}
+                  </div>
+                  <h3 style={{ 
+                    margin: '0 0 8px 0', 
+                    fontSize: '18px', 
+                    fontWeight: '600' 
+                  }}>
+                    Audio Recording Active
+                  </h3>
+                  <p style={{ 
+                    margin: '0', 
+                    fontSize: '14px', 
+                    color: '#6b7280' 
+                  }}>
+                    {microphoneActive ? 'Detecting audio...' : 'Listening for audio...'}
+                  </p>
+                  
+                  {/* Audio Level Indicator */}
+                  <div style={{
+                    width: '200px',
+                    height: '8px',
+                    backgroundColor: '#e5e7eb',
+                    borderRadius: '4px',
+                    marginTop: '16px',
+                    overflow: 'hidden'
+                  }}>
+                    <div style={{
+                      width: `${audioLevel}%`,
+                      height: '100%',
+                      backgroundColor: microphoneActive ? '#10b981' : '#6b7280',
+                      borderRadius: '4px',
+                      transition: 'width 0.1s ease'
+                    }} />
+                  </div>
+                  
+                  {/* Audio Sources Status */}
+                  <div style={{
+                    display: 'flex',
+                    gap: '12px',
+                    marginTop: '16px',
+                    fontSize: '12px'
+                  }}>
+                    {audioSources.microphone && (
+                      <span style={{
+                        background: '#dcfce7',
+                        color: '#166534',
+                        padding: '4px 8px',
+                        borderRadius: '12px'
+                      }}>
+                        🎤 Microphone
+                      </span>
+                    )}
+                    {audioSources.system && (
+                      <span style={{
+                        background: '#dbeafe',
+                        color: '#1e40af',
+                        padding: '4px 8px',
+                        borderRadius: '12px'
+                      }}>
+                        🖥️ System Audio
+                      </span>
+                    )}
+                  </div>
+                </div>
               ) : (
                 <div style={{
                   textAlign: 'center',
                   color: '#6b7280'
                 }}>
-                  <div style={{ fontSize: '48px', marginBottom: '12px' }}>📹</div>
+                  <div style={{ fontSize: '48px', marginBottom: '12px' }}>🎤</div>
                   <p style={{ margin: '0', fontSize: '16px', fontWeight: '500' }}>
-                    Click "Start Recording" to begin
+                    Click "Start Recording" to begin audio recording
+                  </p>
+                  <p style={{ margin: '8px 0 0 0', fontSize: '14px', opacity: '0.8' }}>
+                    Audio-only mode - No video recording
                   </p>
                 </div>
               )}
@@ -2166,6 +2171,71 @@ function App() {
               </div>
             </div>
             
+            {/* Audio Sources Status Display */}
+            <div style={{
+              backgroundColor: '#f8fafc',
+              padding: '16px',
+              borderRadius: '12px',
+              marginTop: '16px',
+              border: '1px solid #e2e8f0'
+            }}>
+              <div style={{
+                fontWeight: '600',
+                fontSize: '14px',
+                color: '#374151',
+                marginBottom: '8px',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '8px'
+              }}>
+                <span>🎵</span>
+                Audio Sources Status
+              </div>
+              <div style={{
+                display: 'flex',
+                flexDirection: 'column',
+                gap: '6px',
+                fontSize: '13px'
+              }}>
+                <div style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '8px'
+                }}>
+                  <span style={{
+                    width: '8px',
+                    height: '8px',
+                    borderRadius: '50%',
+                    backgroundColor: audioSources.microphone ? '#10b981' : '#6b7280'
+                  }}></span>
+                  Microphone: {audioSources.microphone ? 'Active' : 'Not detected'}
+                </div>
+                <div style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '8px'
+                }}>
+                  <span style={{
+                    width: '8px',
+                    height: '8px',
+                    borderRadius: '50%',
+                    backgroundColor: audioSources.system ? '#10b981' : '#6b7280'
+                  }}></span>
+                  System Audio: {audioSources.system ? 'Active (Meeting audio captured)' : 'Not captured'}
+                </div>
+                {!audioSources.system && isRecording && currentMode === 'screen' && (
+                  <div style={{
+                    fontSize: '12px',
+                    color: '#dc2626',
+                    fontWeight: '500',
+                    marginTop: '4px'
+                  }}>
+                    ⚠️ Meeting participants may not be audible
+                  </div>
+                )}
+              </div>
+            </div>
+            
             {/* Recording Buttons */}
             <div style={{
               display: 'flex',
@@ -2195,13 +2265,13 @@ function App() {
                       gap: '8px'
                     }}
                   >
-                    <span>📹</span> Camera Recording
+                    <span>🎤</span> Microphone Recording
                     <span style={{
                       backgroundColor: 'rgba(255,255,255,0.2)',
                       padding: '2px 8px',
                       borderRadius: '6px',
                       fontSize: '12px'
-                    }}>Live transcription</span>
+                    }}>Audio only - Live transcription</span>
                   </button>
                   
                   <button
@@ -2224,13 +2294,13 @@ function App() {
                       gap: '8px'
                     }}
                   >
-                    <span>🖥️</span> Screen Recording
+                    <span>🖥️</span> Screen Audio Recording
                     <span style={{
                       backgroundColor: 'rgba(255,255,255,0.2)',
                       padding: '2px 8px',
                       borderRadius: '6px',
                       fontSize: '12px'
-                    }}>Live transcription</span>
+                    }}>Audio only - Live transcription</span>
                   </button>
                 </>
               ) : (
@@ -2650,24 +2720,6 @@ function App() {
                     color: '#64748b',
                     fontWeight: '500'
                   }}>Audio Chunks</div>
-                </div>
-                <div style={{
-                  backgroundColor: 'white',
-                  borderRadius: '8px',
-                  padding: '12px',
-                  textAlign: 'center',
-                  border: '1px solid #e2e8f0'
-                }}>
-                  <div style={{
-                    fontSize: '20px',
-                    fontWeight: '700',
-                    color: '#10b981'
-                  }}>{videoFrameCount}</div>
-                  <div style={{
-                    fontSize: '12px',
-                    color: '#64748b',
-                    fontWeight: '500'
-                  }}>Video Frames</div>
                 </div>
               </div>
               <div style={{
